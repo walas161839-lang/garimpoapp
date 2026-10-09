@@ -1,0 +1,72 @@
+name: Atualizar cotacoes LME
+on:
+  schedule:
+    - cron: '10 19 * * 1-5'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  atualizar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Ler cobre e estanho da LME (Westmetall)
+        run: |
+          python3 - <<'PY'
+          import re, json, os, datetime, urllib.request
+          UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36'
+          URL = 'https://www.westmetall.com/en/markdaten.php?action=table&field='
+          MES = {'january':1,'february':2,'march':3,'april':4,'may':5,'june':6,'july':7,'august':8,'september':9,'october':10,'november':11,'december':12}
+          def get(u):
+              r = urllib.request.Request(u, headers={'User-Agent': UA, 'Accept-Language': 'en-US,en;q=0.9'})
+              return urllib.request.urlopen(r, timeout=30).read().decode('utf-8', 'ignore')
+          def ultima(page):
+              t = re.sub(r'<[^>]+>', '|', page)
+              t = t.replace('&nbsp;', ' ')
+              t = re.sub(r'\s+', ' ', t)
+              m = re.search(r'(\d{1,2})\.?\s+([A-Za-z]+)\s+(20\d\d)[\s|]+([\d,]+\.\d{2})', t)
+              if not m or m.group(2).lower() not in MES:
+                  return None
+              d = datetime.date(int(m.group(3)), MES[m.group(2).lower()], int(m.group(1)))
+              return {'usd_t': float(m.group(4).replace(',', '')), 'data': d.isoformat()}
+          LIM = {'cobre': (3000, 30000), 'estanho': (10000, 100000)}
+          CAMPOS = {'cobre': 'LME_Cu_cash', 'estanho': 'LME_Sn_cash'}
+          antigo = {}
+          if os.path.exists('cotacoes.json'):
+              try:
+                  antigo = json.load(open('cotacoes.json', encoding='utf-8'))
+              except Exception:
+                  antigo = {}
+          novo = {'ts': datetime.datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ'), 'fonte': 'Westmetall - LME Cash-Settlement (US$/t)'}
+          erro = False
+          for nome, campo in CAMPOS.items():
+              try:
+                  page = get(URL + campo)
+                  print(nome, 'pagina lida, tamanho:', len(page))
+                  v = ultima(page)
+              except Exception as e:
+                  print(nome, 'falhou:', e)
+                  v = None
+              lo, hi = LIM[nome]
+              if not v or not (lo < v['usd_t'] < hi):
+                  print('ERRO:', nome, 'valor nao encontrado ou fora do limite:', v)
+                  erro = True
+                  continue
+              ant = antigo.get(nome, {}).get('usd_t')
+              if ant and abs(v['usd_t'] - ant) / ant > 0.25:
+                  print('ERRO:', nome, 'variacao acima de 25% contra o valor anterior:', ant, '->', v['usd_t'])
+                  erro = True
+                  continue
+              novo[nome] = v
+              print(nome, v['data'], v['usd_t'])
+          if erro:
+              raise SystemExit(1)
+          json.dump(novo, open('cotacoes.json', 'w', encoding='utf-8'), ensure_ascii=False, indent=1)
+          print('cotacoes.json gravado')
+          PY
+      - name: Salvar se mudou
+        run: |
+          git config user.name "garimpoapp-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add cotacoes.json
+          git diff --cached --quiet || (git commit -m "Atualizar cotacoes LME" && git pull --rebase && git push)
