@@ -13,25 +13,67 @@ jobs:
       - name: Ler noticias do site oficial
         run: |
           python3 - <<'PY'
-          import re, json, html, urllib.request, datetime
+          import re, json, html, unicodedata, urllib.request, datetime
           BASE = 'https://www.viabrasilbr163.com.br'
-          req = urllib.request.Request(BASE + '/noticias', headers={'User-Agent': 'Mozilla/5.0 (GarimpoApp)'})
+          UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36'
+          def get(u):
+              r = urllib.request.Request(u, headers={'User-Agent': UA, 'Accept-Language': 'pt-BR,pt;q=0.9'})
+              return urllib.request.urlopen(r, timeout=30).read().decode('utf-8', 'ignore')
+          def palavras(s):
+              s = unicodedata.normalize('NFKD', s).encode('ascii', 'ignore').decode().lower()
+              return set(re.findall(r'[a-z0-9]+', s))
+          def titulo_do_slug(u):
+              s = re.sub(r'-\d+$', '', u.rstrip('/').split('/')[-1]).replace('-', ' ')
+              return s[:1].upper() + s[1:]
+          def extrair(page):
+              itens, vistos = [], set()
+              for m in re.finditer(r'href="([^"]*/noticias/detalhe/[^"#?]+)"', page, re.I):
+                  u = m.group(1)
+                  if not u.startswith('http'):
+                      u = BASE + ('' if u.startswith('/') else '/') + u
+                  if u in vistos:
+                      continue
+                  vistos.add(u)
+                  slug = palavras(re.sub(r'-\d+$', '', u.rstrip('/').split('/')[-1]).replace('-', ' '))
+                  janela = page[max(0, m.start() - 2500):m.end() + 2500]
+                  melhor, nota = '', 0.0
+                  for c in re.findall(r'>([^<>]{12,220})<', janela):
+                      c = html.unescape(re.sub(r'\s+', ' ', c)).strip()
+                      w = palavras(c)
+                      if not w or not slug:
+                          continue
+                      n = len(w & slug) / len(w | slug)
+                      if n > nota:
+                          melhor, nota = c, n
+                  t = melhor if nota >= 0.6 else titulo_do_slug(u)
+                  itens.append({'t': t[:160], 'u': u})
+              return itens
+          itens = []
           try:
-              page = urllib.request.urlopen(req, timeout=30).read().decode('utf-8', 'ignore')
+              page = get(BASE + '/noticias')
+              print('pagina lida, tamanho:', len(page))
+              itens = extrair(page)
           except Exception as e:
-              print('falha ao ler o site:', e); raise SystemExit(0)
-          itens, vistos = [], set()
-          for m in re.finditer(r'<a[^>]+href="([^"]*/noticias/detalhe/[^"]+)"[^>]*>(.*?)</a>', page, re.S | re.I):
-              u = m.group(1)
-              if not u.startswith('http'): u = BASE + ('' if u.startswith('/') else '/') + u
-              t = html.unescape(re.sub(r'\s+', ' ', re.sub(r'<[^>]+>', ' ', m.group(2)))).strip()
-              if u in vistos or len(t) < 12: continue
-              vistos.add(u); itens.append({'t': t[:160], 'u': u})
+              print('leitura direta falhou:', e)
           if not itens:
-              print('nenhuma noticia encontrada; arquivo mantido'); raise SystemExit(0)
+              try:
+                  txt = get('https://r.jina.ai/' + BASE + '/noticias')
+                  print('leitura alternativa, tamanho:', len(txt))
+                  urls = []
+                  for u in re.findall(r'https://www\.viabrasilbr163\.com\.br/noticias/detalhe/[^\s)\]"\'<>]+', txt):
+                      if u not in urls:
+                          urls.append(u)
+                  itens = [{'t': titulo_do_slug(u), 'u': u} for u in urls]
+              except Exception as e:
+                  print('leitura alternativa falhou:', e)
+          if not itens:
+              print('ERRO: nenhuma noticia encontrada')
+              raise SystemExit(1)
           out = {'ts': datetime.datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ'), 'itens': itens[:6]}
           json.dump(out, open('via-brasil.json', 'w', encoding='utf-8'), ensure_ascii=False, indent=1)
-          print(len(itens), 'noticias')
+          print(len(itens), 'noticias; salvas', len(out['itens']))
+          for i in out['itens']:
+              print('-', i['t'])
           PY
       - name: Salvar se mudou
         run: |
