@@ -1,6 +1,12 @@
 {
- "ts": "2026-10-09T20:30:00Z",
+ "ts": "2026-10-09T21:25:54Z",
  "fonte": "Westmetall - LME Cash-Settlement (US$/t)",
- "cobre": {"usd_t": 14526, "data": "2026-10-08"},
- "estanho": {"usd_t": 53050, "data": "2026-10-08"}
+ "cobre": {
+  "usd_t": 14526.0,
+  "data": "2026-10-08"
+ },
+ "estanho": {
+  "usd_t": 53050.0,
+  "data": "2026-10-08"
+ }
 }
