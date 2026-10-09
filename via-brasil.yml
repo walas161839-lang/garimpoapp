@@ -1,0 +1,41 @@
+name: Atualizar avisos Via Brasil
+on:
+  schedule:
+    - cron: '17 */2 * * *'
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  atualizar:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Ler noticias do site oficial
+        run: |
+          python3 - <<'PY'
+          import re, json, html, urllib.request, datetime
+          BASE = 'https://www.viabrasilbr163.com.br'
+          req = urllib.request.Request(BASE + '/noticias', headers={'User-Agent': 'Mozilla/5.0 (GarimpoApp)'})
+          try:
+              page = urllib.request.urlopen(req, timeout=30).read().decode('utf-8', 'ignore')
+          except Exception as e:
+              print('falha ao ler o site:', e); raise SystemExit(0)
+          itens, vistos = [], set()
+          for m in re.finditer(r'<a[^>]+href="([^"]*/noticias/detalhe/[^"]+)"[^>]*>(.*?)</a>', page, re.S | re.I):
+              u = m.group(1)
+              if not u.startswith('http'): u = BASE + ('' if u.startswith('/') else '/') + u
+              t = html.unescape(re.sub(r'\s+', ' ', re.sub(r'<[^>]+>', ' ', m.group(2)))).strip()
+              if u in vistos or len(t) < 12: continue
+              vistos.add(u); itens.append({'t': t[:160], 'u': u})
+          if not itens:
+              print('nenhuma noticia encontrada; arquivo mantido'); raise SystemExit(0)
+          out = {'ts': datetime.datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ'), 'itens': itens[:6]}
+          json.dump(out, open('via-brasil.json', 'w', encoding='utf-8'), ensure_ascii=False, indent=1)
+          print(len(itens), 'noticias')
+          PY
+      - name: Salvar se mudou
+        run: |
+          git config user.name "garimpoapp-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add via-brasil.json
+          git diff --cached --quiet || (git commit -m "Atualizar avisos Via Brasil" && git push)
